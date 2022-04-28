@@ -7,6 +7,9 @@
 		{
 			"name": "NanoSenseIMU",
 			"path": "..\\..\\NanoSenseIMU"
+		},
+		{
+			"path": "DIY_Calibration_Gyroscope"
 		}
 	]
 }
