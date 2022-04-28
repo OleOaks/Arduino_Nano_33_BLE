@@ -3,6 +3,10 @@
 		{
 			"name": "DIY_Calibration_Accelerometer",
 			"path": "DIY_Calibration_Accelerometer"
+		},
+		{
+			"name": "NanoSenseIMU",
+			"path": "..\\..\\NanoSenseIMU"
 		}
 	]
 }
