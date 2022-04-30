@@ -13,6 +13,9 @@
 		},
 		{
 			"path": "DIY_Calibration_Magnetometer"
+		},
+		{
+			"path": "XY_compass"
 		}
 	]
 }
