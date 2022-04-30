@@ -16,6 +16,9 @@
 		},
 		{
 			"path": "XY_compass"
+		},
+		{
+			"path": "Madgwick AHRS"
 		}
 	]
 }
