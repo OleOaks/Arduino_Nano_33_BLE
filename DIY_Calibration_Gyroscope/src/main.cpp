@@ -35,6 +35,15 @@
 
 #include <Arduino_LSM9DS1.h> 
 
+void printSetParam(char txt[], float param[3]);
+void calibrateGyroMenu();
+void calibrateGyroOffset(uint16_t N);  // don't move the board during calibration
+void calibrateGyroslope(unsigned int turnangle);  // rotate board over known angle
+char readChar();
+void readAnswer(char msg[], uint16_t& param);
+void raw_N_Gyro(unsigned int N, float& averX, float& averY, float& averZ);
+
+
 const float gyroSlopeCriterion = 50;  //Smaller value requires more pureness of the rotation  
 char xyz[3]= {'X','Y','Z'};
 boolean gyroOffsetOK=false;
@@ -43,7 +52,7 @@ uint8_t gyroODRindex=5;
 uint8_t gyroFSindex=2;   // (0= ±245 dps; 1= ±500 dps; 2= ±1000 dps; 3= ±2000 dps)
 
 void setup() {
-  Serial.begin(115200); 
+  Serial.begin(9600); 
   while (!Serial);
   pinMode(LED_BUILTIN,OUTPUT); 
   delay(10);
