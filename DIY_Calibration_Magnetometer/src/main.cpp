@@ -1,43 +1,45 @@
 
-/* DIY calibration program for the LSM9DS1 chip 
+/*          DIY calibration program for the LSM9DS1 chip 
  *  
  * Follow the instructions on the screen how to do calibration measurements. 
  * See instruction video https://youtu.be/BLvYFXoP33o
  * No special tools or setups are needed, however it is handy if the board with the LSM9DS1 chip is fitted inside 
- * a non-metalic rectangular box.
- * The Full Scale (FS)and Output DATA Rate (ODR) settings as well as offset and slope factors 
- * are displayed on screen as code that can be copy/pasted directly into a sketch.  
+ * a non-metalic rectangular box with flat sides.
+ * The offset and slope factors are displayed on screen as code that can be copy/pasted directly into a sketch.  
  * Each new instance of the chip will require it's own unique set of calibration factors. 
- * It is recommended that the sketch uses the same FS and ODR settings as the calibration program
  * 
- * Menu operation: type a letter in the input box of the serial monitor followed by enter
+ * To operate the menu in the IDE serial monitor you must press a letter key followed by Enter 
  * 
- * written by Femme Verbeek 6 July 2020
+ *                     Magnetometer
+ * During calibration of the Magnetometer each of it's sensor axes X, Y and Z must be aimed in both ways (positive 
+ * and negative direction) parallel to the earth magnetic field lines. 
+ * It helps a lot if you know roughly what this direction is.  
+ * Info about the Earthmagnetic field https://en.wikipedia.org/wiki/Earth's_magnetic_field
+ * The angle above the horizon is called the inclination angle. If you live in the northern hemisphere roughly in  
+ * southern direction, and in the southern hemisphere roughly in northern direction.
+ * 
+ * written by Femme Verbeek 30-5-2020
  * 
  * This program uses V2 of the LSM9DS1 library 
  * Tested on an Arduino Nano 33 BLE Sense board.
- * 
- * 
  */
 
 #include <Arduino_LSM9DS1.h> 
 
 void printParam(char txt[], float param[3]);
-void calibrateAccelMenu();
-void calibrateAccel(uint16_t);
-void readAnswer(char, uint16_t&);
+void printSetParam(char txt[], float param[3]);
+void calibrateMagnetMenu();
 char readChar();
-void readAnswer(char msg[], uint16_t& param);
-void raw_N_Accel(uint16_t N, float& averX, float& averY, float& averZ);
+void readAnswer(char msg[], float& param);
+void calibrateMagnet();  // measure Offset and Slope of XYZ
+void raw_N_Magnet(unsigned int N, float& averX, float& averY, float& averZ);
 
-const float accelCriterion = 0.1;
-char xyz[3]= {'X','Y','Z'};
-float maxAX = 1, maxAY=1, maxAZ=1, minAX=-1, minAY=-1, minAZ=-1; // Accel Slope
-float zeroAX1 =0,zeroAX2 =0,zeroAY1 =0,zeroAY2 =0,zeroAZ1 =0,zeroAZ2 =0;  //Accel Offset
-boolean accelOK=false;
-uint8_t acceMMlOK=0; // bit 0..2 maxXYZ bit 3..5 minXYZ
-uint8_t accelODRindex=5; // Sample Rate 0:off, 1:10Hz, 2:50Hz, 3:119Hz, 4:238Hz, 5:476Hz, (6:952Hz=na) 
-uint8_t accelFSindex=3;   // Full Scale// 0: ±2g ; 1: ±24g ; 2: ±4g ; 3: ±8g
+float EarthMagnetStrength = 49.0;  //= µT
+
+boolean magnetOK=false;
+uint8_t magnetODRindex=8;  // (0..8)->{0.625,1.25,2.5,5.0,10,20,40,80,400}Hz
+uint8_t magnetFSindex=0;   // 0=±400.0; 1=±800.0; 2=±1200.0 , 3=±1600.0  (µT) 
+
 
 void setup() {
   Serial.begin(9600); 
@@ -45,12 +47,14 @@ void setup() {
   pinMode(LED_BUILTIN,OUTPUT); 
   delay(10);
   if (!IMU.begin()) { Serial.println(F("Failed to initialize IMU!")); while (1);  }
-  IMU.setAccelFS(accelFSindex);   
-  IMU.setAccelODR(accelODRindex);   
-  calibrateAccelMenu();
+  IMU.setMagnetODR(magnetODRindex);
+  IMU.setMagnetFS(magnetFSindex);
 }
 
-void loop(){ }
+void loop() 
+{ // MainMenu();
+  calibrateMagnetMenu();
+}
 
 void printParam(char txt[], float param[3])
 {   for (int i= 0; i<=2 ; i++) 
@@ -59,119 +63,69 @@ void printParam(char txt[], float param[3])
        Serial.print(param[i],6);Serial.print(";");
     }
 }
+
 void printSetParam(char txt[], float param[3])
 {   Serial.print(txt);Serial.print("(");
     Serial.print(param[0],6);Serial.print(", ");
     Serial.print(param[1],6);Serial.print(", ");
     Serial.print(param[2],6);Serial.print(");");
 }
+
 //**********************************************************************************************************************************
-//*********************************************              Accelerometer            **********************************************
+//*********************************************              Magnetometer             **********************************************
 //**********************************************************************************************************************************
 
-void calibrateAccelMenu()
-{char incomingByte = 0;
- byte b;
- uint16_t NofCalibrationSamples = 1000;
- while (1)  //(incomingByte!='X') 
- {  Serial.println(F("\n\n")); 
-    Serial.println(F(" Calibrate Accelerometer Offset and Slope"));
-    Serial.println(F(" Before calibrating choose the Full Scale (FS) setting and Output Data Rate (ODR). The accelerometer and the"));
-    Serial.println(F(" gyroscope share their ODR, so the setting here must be the same as in the DIY_Calibration_Gyroscope sketch."));
-    Serial.println(F(" Place the board on a horizontal surface with one of its axes vertical and hit enter to start a calibration"));
-    Serial.println(F(" measurement. Each of the axes must be measured pointing up and pointing down, so a total of 6 measurements."));
-    Serial.println(F(" The program recognises which axis is vertical and shows which were measured successfully. If the angle is to"));
-    Serial.println(F(" far oblique the measurement is not valid.\n  ")); 
-    Serial.println(F(" (enter)  Start a calibration measurement. "));
-    Serial.print  (F("   (N)    Number of calibration samples "));Serial.println(NofCalibrationSamples);
-    Serial.print  (F("   (F)    Full Scale setting "));Serial.print(accelFSindex);Serial.print(" = ");Serial.print(IMU.getAccelFS(),0);Serial.println(F("g"));
-    Serial.print  (F("   (R)    Output Data Rate (ODR) setting "));Serial.print(accelODRindex);Serial.print(" = ");Serial.print(IMU.getAccelODR(),0);Serial.println(F("Hz (actual value)"));
-    
-//    Serial.println("Press (X) to exit \n");
 
-    Serial.print(F(" Measured status of axis \n "));
-    for (int i=0;i<=2;i++){  Serial.print(xyz[i]); if (bitRead(acceMMlOK,i)==1)Serial.print("+ = ( -OK- ) "); else Serial.print("+ = not done "); }
-    Serial.print("\n ");
-    for (int i=0;i<=2;i++){  Serial.print(xyz[i]); if (bitRead(acceMMlOK,i+3)==1)Serial.print("- = ( -OK- ) "); else Serial.print("- = not done "); }
-   
- //   Serial.println(F("\n\nCurrent  accelerometer calibration values (copy/paste-able)\n"));
-    Serial.println(F("\n\n   // Accelerometer code"));
-    Serial.print(F("   IMU.setAccelFS(")); Serial.print(accelFSindex);
-    Serial.print(F(");\n   IMU.setAccelODR("));Serial.print(accelODRindex);Serial.println(");");
+void calibrateMagnetMenu()
+{ char incomingByte = 0;
+  byte b;
+ // String ans;
+    Serial.println(F("\n\n\n\n\n\n\n\n\n\n\n")); 
+ while (1)   //(incomingByte!='X') 
+{   Serial.println(F("Calibrate Magnetometer"));
+    Serial.println(F("During measurement each of the sensor XYZ axes must be aligned in both directions with the Earth's magnetic field."));   
+    Serial.println(F("This takes about 10 seconds, if you know the local direction of the magnetic field lines. If you don't, it will take"));
+    Serial.println(F("several minutes, as you have to twist the board around, aiming every axis in every direction until the min and max "));
+    Serial.println(F("values no longer change. Info about the Earthmagnetic field https://en.wikipedia.org/wiki/Earth's_magnetic_field "));
+    Serial.println(F("E.g. in my case (Northern hemisphere)declination=0°, inclination=67°, means the aiming direction is South and a"));
+    Serial.println(F("rather steep 67° above the horizon. "));
+    Serial.println(F("The magnetic field measurement will be heavily disturbed by your set-up, so an \"in-situ\" calibration is advised.\n"));
+    Serial.print  (F(" (F) Full Scale setting "));Serial.print(magnetFSindex);Serial.print(" = ±"); Serial.print(IMU.getMagnetFS(),0);Serial.println(F(" µT"));
+    Serial.print  (F(" (R) Output Data Rate (ODR) setting "));Serial.print(magnetODRindex);Serial.print(" = ");Serial.print(IMU.getMagnetODR(),0);Serial.println(F("Hz (actual value)"));
+    Serial.print  (F(" (L) Local intensity of Earth magnetic field  "));Serial.print(EarthMagnetStrength);Serial.println(F(" µT  Change into your local value."));    
+    Serial.println(F(" (C) Calibrate Magnetometer, Twist board around to find min-max values or aim along earth mag field,  press enter to stop\n"));
 
-    printSetParam("   IMU.setAccelOffset",IMU.accelOffset);
+    Serial.println(F("   // Magnetometer code"));
+    Serial.print  (F("   IMU.setMagnetFS("));Serial.print(magnetFSindex);Serial.println(");");
+    Serial.print  (F("   IMU.setMagnetODR("));Serial.print(magnetODRindex);Serial.println(");");
+    printSetParam("   IMU.setMagnetOffset",IMU.magnetOffset);
     Serial.println();
-    printSetParam ("   IMU.setAccelSlope ",IMU.accelSlope); 
-    Serial.println("\n\n");
-    incomingByte= readChar();                          //wait for and get keyboard input
+    printSetParam("   IMU.setMagnetSlope ",IMU.magnetSlope); 
+    Serial.println(F("\n\n"));    
+    incomingByte= readChar();
     switch (incomingByte)
-    { case  'F': { Serial.print (F("\n\nEnter new FS nr  0: ±2g ; 1: ±24g ; 2: ±4g ; 3: ±8g > ")); 
-                  b= readChar()-48; Serial.println(b);
-                  if (b!=accelFSindex && b >=0 && b<=3) accelFSindex=b;
-                  IMU.setAccelFS(accelFSindex); 
-                  Serial.print("\n\n\n\n\n\n\n\n\n"); 
+    { case 'L': { readAnswer("\n\nLocal Earth Magnetic Field intensity  " ,EarthMagnetStrength  );   break;}
+      case 'C': { calibrateMagnet() ;
+                  Serial.print(F("\n\n\n\n\n\n"));
                   break;}
-      case 'R': { Serial.print (F("\n\nEnter new ODR nr   1:10,2:50 3:119,4:238,5:476 Hz > ")); 
-                  b= readChar()-48; //Serial.println(b);
-                  if (b!=accelODRindex && b>=1 && b<=5) accelODRindex=b;
-                  IMU.setAccelODR(accelODRindex);
+      case 'F': { Serial.print (F("\n\nEnter new FS nr 0=±400.0; 1=±800.0; 2=±1200.0 , 3=±1600.0  (µT)> ")); 
+                  b= readChar()-48; Serial.println(b);
+                  if (b!=magnetFSindex && b >=0 && b<=3) magnetFSindex=b;
+                  IMU.setMagnetFS(magnetFSindex); 
+                  Serial.print("\n\n\n"); 
+                  break;}
+      case 'R': { Serial.print (F("\n\nEnter new ODR nr 6: 40Hz, 7: 80Hz, 8: 400Hz not adviced 0..5: 0.625,1.25,2.5,5.0,10,20 Hz  ")); 
+                  b= readChar()-48; Serial.println(b);
+                  if (b!=magnetODRindex && b>=1 && b<=8) magnetODRindex=b;
+                  IMU.setMagnetODR(magnetODRindex);
                   Serial.print("\n\n\n\n\n\n\n\n\n"); 
                   break;
                 }  
-      case 'N': { readAnswer("\n\n\n\n\n\nThe number of calibration samples ", NofCalibrationSamples);
-                  break;}
-      case 'C': {};        
-      default :   calibrateAccel(NofCalibrationSamples);
-    }  
+      default : {Serial.println(F("No menu choise\n\n"));Serial.print(incomingByte); break;}
+    }   
   }
 }
 
-void calibrateAccel(uint16_t NofSamples)
-{  boolean validMmt=false;
-   float x,y,z;
-   Serial.println(F("\n\n\n\n\n\n\n\n\n\n\n")); 
-   Serial.println(F("measuring \n")); 
-//   IMU.setAccelODR(5);  //476 Hz
-   raw_N_Accel(NofSamples,x,y,z);
-   if (abs(x)>max(abs(y),abs(z)))
-   {    Serial.println(F("X detected"));  
-       if (sqrt(y*y+z*z)/x<accelCriterion)
-       {  validMmt= true;
-          if (x>0) {maxAX=x; 
-                    acceMMlOK=acceMMlOK | 0b00000001 ;}
-          else     {minAX=x; 
-                    acceMMlOK=acceMMlOK | 0b00001000 ; }
-       }
-   }
-   if (abs(y)>max(abs(x),abs(z)))
-   {  Serial.println(F("Y detected"));  
-      if (sqrt(x*x+z*z)/y<accelCriterion)
-       {  validMmt= true;
-          if (y>0) {maxAY=y; 
-                    acceMMlOK=acceMMlOK | 0b00000010 ; }
-          else     {minAY=y; 
-                    acceMMlOK=acceMMlOK | 0b00010000 ; }
-       }  
-   }
-   if (abs(z)>max(abs(x),abs(y)))
-   {  Serial.println(F("Z detected"));  
-      if ( sqrt(x*x+y*y)/z<accelCriterion)
-       {  validMmt= true;
-          if (z>0) {maxAZ=z; 
-                    acceMMlOK=acceMMlOK | 0b00000100 ; }
-          else     {minAZ=z;
-                    acceMMlOK=acceMMlOK | 0b00100000 ; }
-       }  
-   }
-   IMU.setAccelOffset((maxAX+minAX)/2,(maxAY+minAY)/2,(maxAZ+minAZ)/2);
-   IMU.setAccelSlope ((maxAX-minAX)/2,(maxAY-minAY)/2,(maxAZ-minAZ)/2);
-   if (acceMMlOK==0b00111111) accelOK = true;
-   
-   if ( !validMmt ) 
-    { Serial.print(F("\n\n\nNot a valid measurement!  "));
-      Serial.println(" x=");Serial.print(x);Serial.print("  y=");Serial.print(y);Serial.println("  z=");Serial.print(z);
-    }
-}
 
 char readChar()
 {  char ch;
@@ -182,7 +136,7 @@ char readChar()
    return ch;
 }
 
-void readAnswer(char msg[], uint16_t& param)
+void readAnswer(char msg[], float& param)
 { char ch=0;
   byte count=0;
   const byte NofChars = 8;
@@ -200,23 +154,49 @@ void readAnswer(char msg[], uint16_t& param)
   }      
   ans[count]=0;
   Serial.println(ans);
-  if (count>1) param= atoi(ans);
+  if (count>1) param= atof(ans);
   while (Serial.available()){Serial.read();}
      Serial.println(F("\n\n\n\n\n\n\n")); 
 }
 
 
-
-void raw_N_Accel(uint16_t N, float& averX, float& averY, float& averZ){
-   float x, y, z;
-   averX=0; averY =0;averZ =0;
-   for (int i=1;i<=N;i++)
-   {  while (!IMU.accelAvailable());
-      IMU.readRawAccel(x, y, z);
-      averX += x;    averY += y;     averZ += z;
-      digitalWrite(LED_BUILTIN, (millis()/125)%2);       // blink onboard led every 250ms
-      if ((i%30)==0)Serial.print('.'); 
+void calibrateMagnet()  // measure Offset and Slope of XYZ
+{  float x, y, z, Xmin, Xmax, Ymin, Ymax, Zmin, Zmax  ;
+   unsigned long count=0;
+   IMU.setMagnetODR(8);    //Fast rate 400Hz
+   raw_N_Magnet(10, Xmin, Ymin, Zmin);             // find some starting values
+   Xmax = Xmin; Ymax = Ymin; Zmax = Zmin;
+   while (!Serial.available())                       // measure until enter key pressed
+   {  raw_N_Magnet(10, x, y, z);                    //average over a number of samples to reduce the effect of outlyers
+      Xmax = max (Xmax, x); Xmin = min (Xmin, x);
+      Ymax = max (Ymax, y); Ymin = min (Ymin, y);
+      Zmax = max (Zmax, z); Zmin = min (Zmin, z);
+      count++;
+      if ((count & 5)==0)                           //reduce the number of prints by a factor 
+      { Serial.print(F("Xmin = "));Serial.print(Xmin); Serial.print(F("  Xmax = "));Serial.print(Xmax);
+        Serial.print(F(" Ymin = "));Serial.print(Ymin); Serial.print(F("  Ymax = "));Serial.print(Ymax);
+        Serial.print(F(" Zmin = "));Serial.print(Zmin); Serial.print(F("  Zmax = "));Serial.print(Zmax);
+        Serial.println();
+      }   
    } 
-   averX /= N;    averY /= N;     averZ /= N;
-   digitalWrite(LED_BUILTIN,0);                          // led off
+   while (Serial.available()) Serial.read();    //readStringUntil(13);        //Empty read buffer
+   IMU.setMagnetOffset( (Xmax+Xmin)/2,(Ymax+Ymin)/2, (Zmax+Zmin)/2 ) ;                                      // store offset
+   IMU.setMagnetSlope ( (2*EarthMagnetStrength)/(Xmax-Xmin),(2*EarthMagnetStrength)/(Ymax-Ymin),(2*EarthMagnetStrength)/(Zmax-Zmin));  // store slope  
+   magnetOK=true;
+   IMU.setMagnetODR(magnetODRindex);
+} 
+
+
+void raw_N_Magnet(unsigned int N, float& averX, float& averY, float& averZ) 
+{    float x, y, z;
+     averX=0; averY =0;averZ =0;
+     for (int i=1;i<=N;i++)
+     {  while (!IMU.magnetAvailable());
+        IMU.readRawMagnet(x, y, z);
+        averX += x;    averY += y;     averZ += z;
+        digitalWrite(LED_BUILTIN, (millis()/125)%2);       // blink onboard led every 250ms
+        if ((i%30)==0)Serial.print('.'); 
+     } 
+     averX /= N;    averY /= N;     averZ /= N;
+     digitalWrite(LED_BUILTIN,0);                         // led off
 }

@@ -10,6 +10,9 @@
 		},
 		{
 			"path": "DIY_Calibration_Gyroscope"
+		},
+		{
+			"path": "DIY_Calibration_Magnetometer"
 		}
 	]
 }
